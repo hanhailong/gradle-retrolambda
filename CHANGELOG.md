@@ -1,8 +1,16 @@
+#### 3.2.5
+- Bumped default retrolambda version to `2.1.0`
+- If the commandline parameters are over a certain limit, they will be written to files. This should
+prevent failures on projects with large classpaths or when a huge number of incremental changes
+happen.
+
+#### 3.2.4
+- Bumped default retrolambda version to `2.0.6`.
+
 #### 3.2.3
 - Fixed long builds times on large projects due to https://issues.gradle.org/browse/GRADLE-3283.
 Note: Running the retrolambda task directly will no longer work, you must run the relevant java
 compile task instead.
-- Bumped default retrolambda version to `2.0.6`.
 
 #### 3.2.2
 - Fixed wrongly deleting lambda classes where the related class is a prefix of the one that actually

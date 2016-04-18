@@ -25,6 +25,7 @@ import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
 import org.gradle.api.tasks.incremental.IncrementalTaskInputs
+import org.gradle.api.tasks.incremental.InputFileDetails
 import org.gradle.util.VersionNumber
 
 import static me.tatarka.RetrolambdaPlugin.checkIfExecutableExists
@@ -34,6 +35,9 @@ import static me.tatarka.RetrolambdaPlugin.javaVersionToBytecode
  * Created by evan on 3/4/14.
  */
 class RetrolambdaTask extends DefaultTask {
+
+    private static final int COMMANDLINE_LENGTH_LIMIT = 3496;
+
     @InputDirectory
     File inputDir
 
@@ -80,22 +84,49 @@ class RetrolambdaTask extends DefaultTask {
                 def bytecodeVersion = javaVersionToBytecode(javaVersion)
 
                 classpath = project.files(project.configurations.retrolambdaConfig)
+                def path = this.classpath.asPath
                 main = 'net.orfjackal.retrolambda.Main'
                 jvmArgs = [
                         "-Dretrolambda.inputDir=$inputDir",
                         "-Dretrolambda.outputDir=$outputDir",
-                        "-Dretrolambda.classpath=${this.classpath.asPath}",
                         "-Dretrolambda.bytecodeVersion=$bytecodeVersion",
                 ]
 
-                if (requiresJavaAgent()) {
-                    jvmArgs += "-javaagent:$classpath.asPath"
+                def requiresJavaAgent = !requireVersion('1.6.0')
+                if (requiresJavaAgent) {
+                    jvmArgs += "-javaagent:$path"
+                }
+
+                def supportIncludeFiles = requireVersion('2.1.0')
+
+                if (supportIncludeFiles && classpathLengthGreaterThanLimit(path)) {
+                    def classpathFile = File.createTempFile("inc-", ".path")
+                    classpathFile.withWriter('UTF-8') { writer ->
+                        for (String item : this.classpath) {
+                            writer.write(item + "\n")
+                        }
+                    }
+                    classpathFile.deleteOnExit();
+                    jvmArgs += "-Dretrolambda.classpathFile=${classpathFile.absolutePath}"
+                } else {
+                    jvmArgs += "-Dretrolambda.classpath=${path}"
                 }
 
                 if (inputs.incremental && retrolambda.incremental) {
-                    jvmArgs += "-Dretrolambda.includedFiles=${changes*.file.join(File.pathSeparator)}"
+                    if (supportIncludeFiles && changeFileLengthGreaterThanLimit(changes)) {
+                        def includedFile = File.createTempFile("inc-", ".list")
+                        includedFile.withWriter('UTF-8') { writer ->
+                            for (InputFileDetails change : changes) {
+                                writer.write(change.file.toString() + "\n")
+                            }
+                        }
+                        includedFile.deleteOnExit();
+                        jvmArgs += "-Dretrolambda.includedFilesFile=${includedFile.absolutePath}"
+                    } else {
+                        jvmArgs += "-Dretrolambda.includedFiles=${changes*.file.join(File.pathSeparator)}"
+                    }
                 }
-                
+
                 if (retrolambda.defaultMethods) {
                     jvmArgs += "-Dretrolambda.defaultMethods=true"
                 }
@@ -114,16 +145,16 @@ class RetrolambdaTask extends DefaultTask {
         }
     }
 
-    def requiresJavaAgent() {
+    def requireVersion(String version, boolean fallback = false) {
         def retrolambdaConfig = project.configurations.retrolambdaConfig
         def retrolambdaDep = retrolambdaConfig.dependencies.iterator().next()
         if (!retrolambdaDep.version) {
-            // Don't know version, assume we need the javaagent.
-            return true
+            // Don't know version, assume fallback.
+            return fallback
         }
         def versionNumber = VersionNumber.parse(retrolambdaDep.version)
-        def targetVersionNumber = VersionNumber.parse('1.6.0')
-        versionNumber < targetVersionNumber
+        def targetVersionNumber = VersionNumber.parse(version)
+        versionNumber >= targetVersionNumber
     }
 
     def File toOutput(File file) {
@@ -140,5 +171,20 @@ class RetrolambdaTask extends DefaultTask {
                 it.delete()
             }
         }
+    }
+
+    def static boolean classpathLengthGreaterThanLimit(String path) {
+        return path.length() > COMMANDLINE_LENGTH_LIMIT
+    }
+
+    def static boolean changeFileLengthGreaterThanLimit(List<InputFileDetails> changes) {
+        int total = 0;
+        for (InputFileDetails change : changes) {
+            total += change.file.toString().length();
+            if (total > COMMANDLINE_LENGTH_LIMIT) {
+                return true
+            }
+        }
+        return false
     }
 }
